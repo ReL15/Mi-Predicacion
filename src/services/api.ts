@@ -1,31 +1,65 @@
 import { Territory, ActivityRecord, Congregation, UserProfile } from '../types';
 
+async function parseJsonResponse<T>(res: Response, fallbackError: string): Promise<T> {
+  let text = '';
+  try {
+    text = await res.text();
+  } catch (err: any) {
+    throw new Error(fallbackError || 'Error al comunicarse con el servidor.');
+  }
+
+  let data: any = null;
+  try {
+    data = text ? JSON.parse(text) : null;
+  } catch {
+    // Si la respuesta fue HTML (ej. página de error del proxy "The page could not be loaded")
+    if (!res.ok) {
+      throw new Error(`Error en el servidor (${res.status}). Por favor reintenta en unos momentos.`);
+    }
+    throw new Error(`Respuesta inesperada del servidor: ${fallbackError}`);
+  }
+
+  if (!res.ok) {
+    const errorMsg = data?.error || data?.message || fallbackError;
+    throw new Error(errorMsg);
+  }
+
+  return data as T;
+}
+
 export async function fetchHealth(): Promise<{ status: string; database: string }> {
-  const res = await fetch('/api/health');
-  if (!res.ok) throw new Error('Error al conectar con el servidor.');
-  return res.json();
+  try {
+    const res = await fetch('/api/health');
+    return await parseJsonResponse<{ status: string; database: string }>(
+      res,
+      'Error al verificar estado de la base de datos.'
+    );
+  } catch {
+    return { status: 'error', database: 'disconnected' };
+  }
 }
 
 export async function fetchTerritories(): Promise<Territory[]> {
   const res = await fetch('/api/territories');
-  if (!res.ok) {
-    const errorData = await res.json().catch(() => ({}));
-    throw new Error(errorData.error || 'Error al obtener territorios de la base de datos externa.');
-  }
-  return res.json();
+  return parseJsonResponse<Territory[]>(
+    res,
+    'Error al obtener territorios de la base de datos externa.'
+  );
 }
 
 export async function fetchTerritoryById(id: string): Promise<Territory> {
   const res = await fetch(`/api/territories/${id}`);
-  if (!res.ok) throw new Error('Error al cargar detalle del territorio.');
-  return res.json();
+  return parseJsonResponse<Territory>(
+    res,
+    'Error al cargar el detalle del territorio seleccionado.'
+  );
 }
 
 export async function fetchCongregation(): Promise<Congregation | null> {
   try {
     const res = await fetch('/api/congregation');
     if (!res.ok) return null;
-    return res.json();
+    return await parseJsonResponse<Congregation | null>(res, 'Error al obtener congregación.');
   } catch {
     return null;
   }
@@ -35,7 +69,7 @@ export async function fetchPublishers(): Promise<UserProfile[]> {
   try {
     const res = await fetch('/api/users');
     if (!res.ok) return [];
-    return res.json();
+    return await parseJsonResponse<UserProfile[]>(res, 'Error al obtener publicadores.');
   } catch {
     return [];
   }
@@ -52,8 +86,10 @@ export async function fetchActivities(filters?: {
   if (filters?.territoryId) params.append('territoryId', filters.territoryId);
 
   const res = await fetch(`/api/activities?${params.toString()}`);
-  if (!res.ok) throw new Error('Error al cargar historial de actividades.');
-  return res.json();
+  return parseJsonResponse<ActivityRecord[]>(
+    res,
+    'Error al cargar el historial de actividades ministeriales.'
+  );
 }
 
 export async function createActivity(activity: Partial<ActivityRecord>): Promise<ActivityRecord> {
@@ -62,18 +98,21 @@ export async function createActivity(activity: Partial<ActivityRecord>): Promise
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(activity),
   });
-  if (!res.ok) {
-    const errorData = await res.json().catch(() => ({}));
-    throw new Error(errorData.error || 'Error al guardar actividad ministerial.');
-  }
-  return res.json();
+  return parseJsonResponse<ActivityRecord>(
+    res,
+    'Error al guardar la actividad ministerial en el servidor.'
+  );
 }
 
 export async function deleteActivity(id: string): Promise<boolean> {
-  const res = await fetch(`/api/activities/${id}`, {
-    method: 'DELETE',
-  });
-  return res.ok;
+  try {
+    const res = await fetch(`/api/activities/${id}`, {
+      method: 'DELETE',
+    });
+    return res.ok;
+  } catch {
+    return false;
+  }
 }
 
 export async function loginWithNeon(
@@ -85,10 +124,12 @@ export async function loginWithNeon(
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ emailOrName, password }),
   });
-  const data = await res.json();
-  if (!res.ok || !data.success) {
-    throw new Error(data.error || 'Error al iniciar sesión con Neon Console');
+  const data = await parseJsonResponse<{ success: boolean; user: UserProfile }>(
+    res,
+    'Error al iniciar sesión con Neon Console.'
+  );
+  if (!data?.user) {
+    throw new Error('Respuesta de usuario inválida.');
   }
   return data.user;
 }
-

@@ -136,6 +136,7 @@ export default function App() {
     try {
       localStorage.setItem('mi_predicacion_user', JSON.stringify(user));
     } catch {}
+    loadData();
   };
 
   // Handle logout
