@@ -34,7 +34,7 @@ async function parseJsonResponse<T>(res: Response, fallbackError: string): Promi
   try {
     data = text ? JSON.parse(text) : null;
    } catch {
-     throw new Error(fallbackError || `Error del servidor (${res.status}).`);
+     throw new Error(`${fallbackError} (HTTP ${res.status}: el servidor no devolvió JSON)`);
    }
 
   if (!res.ok) {

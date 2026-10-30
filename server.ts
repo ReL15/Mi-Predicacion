@@ -1,5 +1,4 @@
 import express from 'express';
-import { createServer as createViteServer } from 'vite';
 import path from 'path';
 import fs from 'fs';
 import pg from 'pg';
@@ -11,9 +10,10 @@ const { Pool } = pg;
 
 // Neon PostgreSQL Connection Pool
 // Keep credentials secure on server side
-const NEON_DATABASE_URL =
-  process.env.DATABASE_URL ||
-  'postgresql://neondb_owner:npg_E4uZPoXML5Id@ep-muddy-hall-b7fi2xbd-pooler.c-13.us-east-1.aws.neon.tech/neondb?sslmode=require&channel_binding=require';
+const NEON_DATABASE_URL = process.env.DATABASE_URL;
+if (!NEON_DATABASE_URL) {
+  console.error('❌ Falta la variable de entorno DATABASE_URL (configúrala en Vercel → Settings → Environment Variables).');
+}
 
 const pool = new Pool({
   connectionString: NEON_DATABASE_URL,
@@ -239,7 +239,7 @@ app.post('/api/auth/login', async (req, res) => {
     }
 
     // Comparar con el password_hash existente en Neon
-    if (user.password_hash && user.password_hash.trim() !== password.trim()) {
+    if (!user.password_hash || user.password_hash.trim() !== password.trim()) {
       return res.status(401).json({
         error: 'Contraseña incorrecta. Verifica tu contraseña registrada en Neon.',
       });
@@ -250,7 +250,9 @@ app.post('/api/auth/login', async (req, res) => {
     res.json({ success: true, user: safeUser });
   } catch (err: any) {
     console.error('Error in /api/auth/login:', err);
-    res.status(500).json({ error: 'Error del servidor al autenticar el usuario en Neon.' });
+    res.status(500).json({
+      error: `Error del servidor al autenticar el usuario en Neon${err?.code ? ` (${err.code})` : ''}.`,
+    });
   }
 });
 
@@ -378,6 +380,7 @@ app.all('/api/*', (req, res) => {
 
 async function startServer() {
   if (process.env.NODE_ENV !== 'production') {
+    const { createServer: createViteServer } = await import('vite');
     const vite = await createViteServer({
       server: { middlewareMode: true },
       appType: 'spa',
