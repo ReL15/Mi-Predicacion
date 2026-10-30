@@ -1,0 +1,6 @@
+{
+  "name": "Mi Predicación",
+  "description": "Organización de salidas a predicar, consulta de territorios oficiales desde Neon PostgreSQL y registro de actividad ministerial.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
