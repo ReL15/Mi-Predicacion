@@ -34,6 +34,25 @@ const port = 3000;
 
 app.use(express.json());
 
+// CORS and Preflight handling
+app.use((req, res, next) => {
+  res.header('Access-Control-Allow-Origin', '*');
+  res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+  res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization');
+  if (req.method === 'OPTIONS') {
+    return res.sendStatus(200);
+  }
+  next();
+});
+
+// Request logging for API routes
+app.use((req, _res, next) => {
+  if (req.url.startsWith('/api')) {
+    console.log(`[API ${new Date().toISOString().substring(11, 19)}] ${req.method} ${req.url}`);
+  }
+  next();
+});
+
 // Persistent store for user preaching sessions & activity records
 const DATA_FILE = path.resolve(process.cwd(), '.preaching_records.json');
 
@@ -344,6 +363,13 @@ app.delete('/api/activities/:id', (req, res) => {
   } else {
     res.status(404).json({ error: 'Registro no encontrado' });
   }
+});
+
+// Fallback for any unhandled /api/* routes (Always return JSON, never HTML)
+app.all('/api/*', (req, res) => {
+  res.status(404).json({
+    error: `Ruta de API no encontrada: ${req.method} ${req.originalUrl}`,
+  });
 });
 
 // ==========================================

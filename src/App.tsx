@@ -99,11 +99,14 @@ export default function App() {
     setTerritoriesError(null);
     try {
       const [terrList, actsList, congData, usersList, healthRes] = await Promise.all([
-        fetchTerritories(),
-        fetchActivities(),
-        fetchCongregation(),
-        fetchPublishers(),
-        fetchHealth().catch(() => ({ status: 'ok', database: 'connected' })),
+        fetchTerritories().catch((e) => {
+          console.warn('Territories fetch notice:', e.message);
+          return [] as Territory[];
+        }),
+        fetchActivities().catch(() => [] as ActivityRecord[]),
+        fetchCongregation().catch(() => null),
+        fetchPublishers().catch(() => [] as UserProfile[]),
+        fetchHealth(),
       ]);
 
       setTerritories(terrList);
@@ -111,6 +114,10 @@ export default function App() {
       setCongregation(congData);
       setPublishers(usersList);
       setDbStatus(healthRes);
+
+      if (terrList.length === 0 && healthRes.database !== 'connected') {
+        setTerritoriesError('Reconectando con la base de datos de Neon...');
+      }
     } catch (err: any) {
       console.error('Error loading data from Neon API:', err);
       setTerritoriesError(err.message || 'Error al conectar con la base de datos externa.');
