@@ -9,7 +9,6 @@ async function fetchWithRetry(
   for (let attempt = 0; attempt <= retries; attempt++) {
     try {
       const res = await fetch(url, options);
-      // Si el servidor está calentando o reiniciando y devuelve 404 o >= 500, reintentar
       if ((res.status === 404 || res.status >= 500) && attempt < retries) {
         await new Promise((resolve) => setTimeout(resolve, delayMs * (attempt + 1)));
         continue;
@@ -20,7 +19,7 @@ async function fetchWithRetry(
       await new Promise((resolve) => setTimeout(resolve, delayMs * (attempt + 1)));
     }
   }
-  return fetch(url, options);
+  throw new Error('Servicio no disponible. Intenta nuevamente.');
 }
 
 async function parseJsonResponse<T>(res: Response, fallbackError: string): Promise<T> {
@@ -34,12 +33,9 @@ async function parseJsonResponse<T>(res: Response, fallbackError: string): Promi
   let data: any = null;
   try {
     data = text ? JSON.parse(text) : null;
-  } catch {
-    if (res.status === 404) {
-      throw new Error('Servicio reconectando. Por favor presiona reintentar.');
-    }
-    throw new Error(fallbackError || `Error del servidor (${res.status}).`);
-  }
+   } catch {
+     throw new Error(fallbackError || `Error del servidor (${res.status}).`);
+   }
 
   if (!res.ok) {
     const errorMsg = data?.error || data?.message || fallbackError;
