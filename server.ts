@@ -1,6 +1,5 @@
 import express from 'express';
 import path from 'path';
-import fs from 'fs';
 import pg from 'pg';
 import dotenv from 'dotenv';
 
@@ -53,9 +52,8 @@ app.use((req, _res, next) => {
   next();
 });
 
-// Persistent store for user preaching sessions & activity records
-const DATA_FILE = path.resolve(process.cwd(), '.preaching_records.json');
-
+// Los registros de actividad se guardan en Neon (tabla preaching_activities).
+// Vercel no permite guardar archivos de forma persistente, por eso ya no se usa un JSON local.
 interface ActivityRecord {
   id: string;
   userId: string;
@@ -73,27 +71,50 @@ interface ActivityRecord {
   createdAt: string;
 }
 
-function loadLocalActivities(): ActivityRecord[] {
-  try {
-    if (fs.existsSync(DATA_FILE)) {
-      const raw = fs.readFileSync(DATA_FILE, 'utf-8');
-      return JSON.parse(raw);
-    }
-  } catch (err) {
-    console.error('Failed reading activities file:', err);
+let activitiesTableReady: Promise<void> | null = null;
+function ensureActivitiesTable(): Promise<void> {
+  if (!activitiesTableReady) {
+    activitiesTableReady = pool
+      .query(`
+        CREATE TABLE IF NOT EXISTS preaching_activities (
+          id TEXT PRIMARY KEY,
+          user_id TEXT NOT NULL,
+          date DATE NOT NULL,
+          hours INTEGER NOT NULL DEFAULT 0,
+          minutes INTEGER NOT NULL DEFAULT 0,
+          publications INTEGER NOT NULL DEFAULT 0,
+          videos INTEGER NOT NULL DEFAULT 0,
+          return_visits INTEGER NOT NULL DEFAULT 0,
+          bible_studies INTEGER NOT NULL DEFAULT 0,
+          territory_id TEXT,
+          territory_number TEXT,
+          territory_name TEXT,
+          notes TEXT NOT NULL DEFAULT '',
+          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
+      `)
+      .then(() => undefined)
+      .catch((err) => {
+        activitiesTableReady = null; // permitir reintentar
+        throw err;
+      });
   }
-  return [];
+  return activitiesTableReady;
 }
 
-function saveLocalActivities(records: ActivityRecord[]) {
-  try {
-    fs.writeFileSync(DATA_FILE, JSON.stringify(records, null, 2), 'utf-8');
-  } catch (err) {
-    console.error('Failed saving activities file:', err);
-  }
-}
-
-let activitiesStore: ActivityRecord[] = loadLocalActivities();
+const ACTIVITY_COLUMNS = `
+  id,
+  user_id AS "userId",
+  to_char(date, 'YYYY-MM-DD') AS date,
+  hours, minutes, publications, videos,
+  return_visits AS "returnVisits",
+  bible_studies AS "bibleStudies",
+  territory_id AS "territoryId",
+  territory_number AS "territoryNumber",
+  territory_name AS "territoryName",
+  notes,
+  to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS "createdAt"
+`;
 
 // ==========================================
 // API ROUTES
@@ -272,32 +293,33 @@ app.get('/api/users', async (_req, res) => {
 });
 
 // 6. GET /api/activities - Historial de actividades
-app.get('/api/activities', (req, res) => {
-  const { month, year, territoryId } = req.query;
-  let filtered = [...activitiesStore];
-
-  if (year) {
-    filtered = filtered.filter((r) => r.date.startsWith(`${year}`));
+app.get('/api/activities', async (req, res) => {
+  try {
+    await ensureActivitiesTable();
+    const { month, year, territoryId, userId } = req.query;
+    const where: string[] = [];
+    const params: any[] = [];
+    if (year) { params.push(Number(year)); where.push(`EXTRACT(YEAR FROM date) = $${params.length}`); }
+    if (month) { params.push(Number(month)); where.push(`EXTRACT(MONTH FROM date) = $${params.length}`); }
+    if (territoryId) { params.push(String(territoryId)); where.push(`territory_id = $${params.length}`); }
+    if (userId) { params.push(String(userId)); where.push(`user_id = $${params.length}`); }
+    const result = await pool.query(
+      `SELECT ${ACTIVITY_COLUMNS} FROM preaching_activities
+       ${where.length ? 'WHERE ' + where.join(' AND ') : ''}
+       ORDER BY date DESC, created_at DESC`,
+      params
+    );
+    res.json(result.rows);
+  } catch (err: any) {
+    console.error('Error listing activities:', err);
+    res.status(500).json({ error: 'Error al leer las actividades', details: err.message });
   }
-  if (month) {
-    const padMonth = String(month).padStart(2, '0');
-    filtered = filtered.filter((r) => {
-      const parts = r.date.split('-');
-      return parts[1] === padMonth;
-    });
-  }
-  if (territoryId) {
-    filtered = filtered.filter((r) => r.territoryId === territoryId);
-  }
-
-  // Ordenar por fecha descendente
-  filtered.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
-  res.json(filtered);
 });
 
 // 7. POST /api/activities - Registrar nueva actividad ministerial
 app.post('/api/activities', async (req, res) => {
   try {
+    await ensureActivitiesTable();
     const {
       userId = 'usr-default',
       date,
@@ -319,7 +341,6 @@ app.post('/api/activities', async (req, res) => {
     let territoryName = null;
 
     if (territoryId) {
-      // Validar contra Neon PostgreSQL
       const terrRes = await pool.query('SELECT id, number, name FROM territories WHERE id = $1', [territoryId]);
       if (terrRes.rows.length > 0) {
         territoryNumber = terrRes.rows[0].number;
@@ -327,27 +348,31 @@ app.post('/api/activities', async (req, res) => {
       }
     }
 
-    const newRecord: ActivityRecord = {
-      id: `act-${Date.now()}`,
-      userId,
-      date,
-      hours: Number(hours) || 0,
-      minutes: Number(minutes) || 0,
-      publications: Number(publications) || 0,
-      videos: Number(videos) || 0,
-      returnVisits: Number(returnVisits) || 0,
-      bibleStudies: Number(bibleStudies) || 0,
-      territoryId: territoryId || null,
-      territoryNumber,
-      territoryName,
-      notes: notes || '',
-      createdAt: new Date().toISOString(),
-    };
+    const id = `act-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+    const result = await pool.query(
+      `INSERT INTO preaching_activities
+         (id, user_id, date, hours, minutes, publications, videos, return_visits,
+          bible_studies, territory_id, territory_number, territory_name, notes)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
+       RETURNING ${ACTIVITY_COLUMNS}`,
+      [
+        id,
+        String(userId),
+        date,
+        Number(hours) || 0,
+        Number(minutes) || 0,
+        Number(publications) || 0,
+        Number(videos) || 0,
+        Number(returnVisits) || 0,
+        Number(bibleStudies) || 0,
+        territoryId ? String(territoryId) : null,
+        territoryNumber != null ? String(territoryNumber) : null,
+        territoryName,
+        notes || '',
+      ]
+    );
 
-    activitiesStore.unshift(newRecord);
-    saveLocalActivities(activitiesStore);
-
-    res.status(201).json(newRecord);
+    res.status(201).json(result.rows[0]);
   } catch (err: any) {
     console.error('Error creating activity:', err);
     res.status(500).json({ error: 'Error al registrar actividad', details: err.message });
@@ -355,15 +380,18 @@ app.post('/api/activities', async (req, res) => {
 });
 
 // 8. DELETE /api/activities/:id - Eliminar registro de actividad
-app.delete('/api/activities/:id', (req, res) => {
-  const { id } = req.params;
-  const initialLen = activitiesStore.length;
-  activitiesStore = activitiesStore.filter((a) => a.id !== id);
-  if (activitiesStore.length !== initialLen) {
-    saveLocalActivities(activitiesStore);
-    res.json({ success: true });
-  } else {
-    res.status(404).json({ error: 'Registro no encontrado' });
+app.delete('/api/activities/:id', async (req, res) => {
+  try {
+    await ensureActivitiesTable();
+    const result = await pool.query('DELETE FROM preaching_activities WHERE id = $1', [req.params.id]);
+    if (result.rowCount) {
+      res.json({ success: true });
+    } else {
+      res.status(404).json({ error: 'Registro no encontrado' });
+    }
+  } catch (err: any) {
+    console.error('Error deleting activity:', err);
+    res.status(500).json({ error: 'Error al eliminar la actividad', details: err.message });
   }
 });
 
