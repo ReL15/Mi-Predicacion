@@ -103,7 +103,7 @@ export default function App() {
           console.warn('Territories fetch notice:', e.message);
           return [] as Territory[];
         }),
-        fetchActivities().catch(() => [] as ActivityRecord[]),
+        fetchActivities({ userId: currentUser?.id }).catch(() => [] as ActivityRecord[]),
         fetchCongregation().catch(() => null),
         fetchPublishers().catch(() => [] as UserProfile[]),
         fetchHealth(),
@@ -124,7 +124,7 @@ export default function App() {
     } finally {
       setIsLoadingTerritories(false);
     }
-  }, []);
+  }, [currentUser]);
 
   useEffect(() => {
     loadData();

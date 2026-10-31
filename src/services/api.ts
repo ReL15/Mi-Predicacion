@@ -97,11 +97,13 @@ export async function fetchActivities(filters?: {
   month?: number;
   year?: number;
   territoryId?: string;
+  userId?: string;
 }): Promise<ActivityRecord[]> {
   const params = new URLSearchParams();
   if (filters?.month) params.append('month', String(filters.month));
   if (filters?.year) params.append('year', String(filters.year));
   if (filters?.territoryId) params.append('territoryId', filters.territoryId);
+  if (filters?.userId) params.append('userId', filters.userId);
 
   const res = await fetchWithRetry(`/api/activities?${params.toString()}`);
   return parseJsonResponse<ActivityRecord[]>(
